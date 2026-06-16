@@ -1,0 +1,32 @@
+server:
+  port: "8080"
+  mode: "debug" # debug | release
+
+grpc:
+  port: "50051"
+
+postgres:
+  dsn: "postgres://auth_user:auth_pass@localhost:5432/auth_db?sslmode=disable"
+  max_conns: 25
+  min_conns: 5
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+jwt:
+  access_secret: "change-me-access-secret-min-32-chars!!"
+  refresh_secret: "change-me-refresh-secret-min-32-chars!"
+  access_exp_minutes: 15
+  refresh_exp_days: 30
+
+email:
+  host: "smtp.mailtrap.io"
+  port: 587
+  username: ""
+  password: ""
+  from: "noreply@auth-service.local"
+
+rabbitmq:
+  url: "amqp://guest:guest@localhost:5672/"

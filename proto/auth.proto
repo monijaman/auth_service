@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package auth;
+
+option go_package = "github.com/monir/auth_service/proto/gen/auth;authpb";
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
+message TokenRequest {
+  string token = 1;
+}
+
+message TokenResponse {
+  bool     valid       = 1;
+  string   user_id     = 2;
+  string   email       = 3;
+  repeated string roles       = 4;
+  repeated string permissions = 5;
+}
+
+message UserRequest {
+  string user_id = 1;
+}
+
+message UserResponse {
+  string   id             = 1;
+  string   email          = 2;
+  string   phone          = 3;
+  string   status         = 4;
+  bool     email_verified = 5;
+  repeated string roles   = 6;
+}
+
+message PermissionRequest {
+  string user_id    = 1;
+  string permission = 2;
+}
+
+message PermissionResponse {
+  bool has_permission = 1;
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
+
+service AuthService {
+  // Validate an access token — called by other microservices via gRPC.
+  rpc ValidateToken   (TokenRequest)      returns (TokenResponse);
+  // Fetch a user by ID — called by other microservices.
+  rpc GetUser         (UserRequest)       returns (UserResponse);
+  // RBAC permission check — called by other microservices.
+  rpc HasPermission   (PermissionRequest) returns (PermissionResponse);
+}

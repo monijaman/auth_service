@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+  namespace: default
+data:
+  config.yaml: |
+    server:
+      port: "8080"
+      mode: "release"
+    grpc:
+      port: "50051"
+    postgres:
+      max_conns: 25
+      min_conns: 5
+    redis:
+      db: 0
+    jwt:
+      access_exp_minutes: 15
+      refresh_exp_days: 30
+    email:
+      host: "smtp.mailtrap.io"
+      port: 587
+      from: "noreply@auth-service.local"
+    rabbitmq: {}
