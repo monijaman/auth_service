@@ -28,6 +28,27 @@ migrate-create:
 	@read -p "Migration name: " name; \
 	migrate create -ext sql -dir migrations -seq $$name
 
+# ── Kubernetes ───────────────────────────────────────────────────────────────
+k8s-deploy:
+	@echo "Applying secrets and config..."
+	kubectl apply -f k8s/secret.yaml
+	kubectl apply -f k8s/configmap.yaml
+	kubectl apply -f k8s/migration-configmap.yaml
+	@echo "Running migrations..."
+	kubectl apply -f k8s/migration-job.yaml
+	kubectl wait --for=condition=complete job/auth-migrate --timeout=120s
+	@echo "Deploying service..."
+	kubectl apply -f k8s/deployment.yaml
+	kubectl apply -f k8s/service.yaml
+	kubectl apply -f k8s/ingress.yaml
+	kubectl rollout status deployment/auth-service
+
+k8s-delete:
+	kubectl delete -f k8s/ --ignore-not-found
+
+k8s-logs:
+	kubectl logs -l app=auth-service -f
+
 # ── Proto (run after installing protoc) ───────────────────────────────────────
 proto:
 	@which protoc > /dev/null 2>&1 || (echo "Install protoc: https://grpc.io/docs/protoc-installation/" && exit 1)
