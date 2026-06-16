@@ -1,7 +1,27 @@
 # Auth Service
 
-Centralized authentication and authorization microservice for the platform.
-Used by all other services via REST (external) and gRPC (internal).
+Centralized authentication and authorization microservice.
+Other services authenticate users via **REST** (external) and **gRPC** (internal).
+
+---
+
+## Table of Contents
+
+- [Status](#status)
+- [Prerequisites](#prerequisites)
+- [Run Locally](#run-locally)
+- [Verify It Works](#verify-it-works)
+- [Environment Variables](#environment-variables)
+- [REST API](#rest-api)
+- [gRPC API](#grpc-api-internal)
+- [Events](#events-rabbitmq)
+- [Database Migrations](#database-migrations)
+- [Kubernetes Deployment](#kubernetes-deployment)
+- [Observability](#observability)
+- [Security](#security)
+- [Project Structure](#project-structure)
+
+---
 
 ## Status
 
@@ -20,43 +40,89 @@ Used by all other services via REST (external) and gRPC (internal).
 
 ---
 
-## Quick Start
+## Prerequisites
 
-### 1. Prerequisites
-
-- Docker & Docker Compose
-- Go 1.24+
-- (Optional) `protoc` for regenerating gRPC stubs
-- (Optional) `migrate` CLI for running migrations manually
-
-### 2. Run locally with Docker
+| Tool | Version | Install |
+|------|---------|---------|
+| Go | 1.24+ | `sudo apt install golang-go` or [go.dev/dl](https://go.dev/dl/) |
+| Docker | latest | `sudo apt install docker.io docker-compose-plugin` |
+| migrate CLI | v4.18+ | See below (optional) |
 
 ```bash
-cp .env.example .env
-# Edit .env — set JWT secrets at minimum
-
-docker compose up -d                    # Start postgres, redis, rabbitmq
-docker compose run --rm migrate         # Run DB migrations
-go run ./cmd/server                     # Start the service
+# Install migrate CLI (optional — for manual DB control)
+curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar xz
+sudo mv migrate /usr/local/bin/
 ```
 
-Or build and run everything in Docker:
+---
+
+## Run Locally
 
 ```bash
-docker compose --profile migrate up -d  # Starts all services + runs migrations
+# 1. Clone and enter the directory
+cd auth_service
+
+# 2. Start infrastructure (postgres, redis, rabbitmq)
+docker compose up -d postgres redis rabbitmq
+
+# 3. Run database migrations
+docker compose run --rm migrate
+
+# 4. Download Go dependencies
+go mod tidy
+
+# 5. Start the service
+go run ./cmd/server
 ```
 
-### 3. Environment variables
+The service starts on:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL DSN | from `configs/config.yaml` |
-| `REDIS_ADDR` | Redis address | `localhost:6379` |
-| `RABBITMQ_URL` | RabbitMQ AMQP URL | `amqp://guest:guest@localhost:5672/` |
-| `JWT_ACCESS_SECRET` | **Required.** Min 32 chars | — |
-| `JWT_REFRESH_SECRET` | **Required.** Min 32 chars | — |
-| `CONFIG_PATH` | Path to config YAML | `configs/config.yaml` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP gRPC endpoint for tracing | disabled |
+| | URL |
+|-|-----|
+| REST API | `http://localhost:8080/api/v1` |
+| Health   | `http://localhost:8080/health` |
+| Metrics  | `http://localhost:8080/metrics` |
+| gRPC     | `localhost:50051` |
+
+---
+
+## Verify It Works
+
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Register
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"secret123"}'
+
+# Login — save the access_token from the response
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"secret123"}'
+
+# Get current user
+curl http://localhost:8080/api/v1/users/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in the values.
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `JWT_ACCESS_SECRET` | ✅ | Min 32 chars | — |
+| `JWT_REFRESH_SECRET` | ✅ | Min 32 chars | — |
+| `DATABASE_URL` | | PostgreSQL DSN | from `configs/config.yaml` |
+| `REDIS_ADDR` | | Redis address | `localhost:6379` |
+| `RABBITMQ_URL` | | AMQP URL (leave empty to disable events) | — |
+| `PORT` | | HTTP port | `8080` |
+| `CONFIG_PATH` | | Path to config YAML | `configs/config.yaml` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | OTLP endpoint for tracing | disabled |
 
 ---
 
@@ -64,17 +130,17 @@ docker compose --profile migrate up -d  # Starts all services + runs migrations
 
 Base URL: `http://localhost:8080/api/v1`
 
-### Public endpoints
+### Public
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/auth/register` | Register a new user |
-| POST | `/auth/login` | Login, returns access + refresh tokens |
+| POST | `/auth/login` | Login — returns access + refresh tokens |
 | POST | `/auth/refresh` | Rotate refresh token |
-| POST | `/auth/forgot-password` | Send password reset OTP |
-| POST | `/auth/reset-password` | Reset password with OTP |
+| POST | `/auth/forgot-password` | Send password reset OTP to email |
+| POST | `/auth/reset-password` | Reset password using OTP |
 
-### Authenticated endpoints
+### Protected
 
 > Requires `Authorization: Bearer <access_token>`
 
@@ -83,34 +149,16 @@ Base URL: `http://localhost:8080/api/v1`
 | POST | `/auth/logout` | Revoke refresh token |
 | POST | `/auth/verify-email` | Verify email with OTP |
 | POST | `/auth/resend-verification` | Resend verification email |
-| GET | `/users/me` | Get current user |
+| GET | `/users/me` | Get current user profile |
 | GET | `/users/:id` | Get user by ID |
 | PUT | `/users/:id` | Update user |
 | DELETE | `/users/:id` | Soft-delete user |
-
-### Example: Register
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"secret123"}'
-```
-
-### Example: Login
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"secret123"}'
-```
 
 ---
 
 ## gRPC API (internal)
 
-Port: `50051`
-
-Used by other microservices to validate tokens and check permissions.
+Port `50051` — used by other microservices to validate tokens and check permissions.
 
 ```protobuf
 service AuthService {
@@ -125,7 +173,8 @@ service AuthService {
 ```go
 import authpb "github.com/monir/auth_service/proto/gen/auth"
 
-conn, _ := grpc.NewClient("auth-service:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+conn, _ := grpc.NewClient("auth-service:50051",
+    grpc.WithTransportCredentials(insecure.NewCredentials()))
 client := authpb.NewAuthServiceClient(conn)
 
 resp, _ := client.ValidateToken(ctx, &authpb.TokenRequest{Token: bearerToken})
@@ -134,47 +183,90 @@ if resp.Valid {
 }
 ```
 
-> **Note on gRPC encoding**: The service currently uses JSON encoding over gRPC (no protoc required).
-> To switch to binary protobuf (recommended for production), install protoc and run `make proto`,
-> then remove the `init()` codec override in `proto/gen/auth/auth.go`.
+> **Note:** gRPC currently uses JSON encoding (no `protoc` required).
+> Run `make proto` after installing protoc to switch to binary protobuf for production.
 
 ---
 
 ## Events (RabbitMQ)
 
-Exchange: `auth.events` (topic)
+Exchange: `auth.events` (topic). Leave `RABBITMQ_URL` empty to disable.
 
-| Routing key | When |
-|-------------|------|
-| `UserRegistered` | After successful registration |
-| `UserLoggedIn` | After successful login |
-| `UserLoggedOut` | After logout |
-| `PasswordChanged` | After password reset |
-| `EmailVerified` | After email verification |
-| `UserDeleted` | After soft delete |
-
----
-
-## Observability
-
-- **Metrics**: Prometheus — `GET /metrics`
-- **Tracing**: OpenTelemetry (OTLP gRPC) — set `OTEL_EXPORTER_OTLP_ENDPOINT`
-- **Health**: `GET /health`
+| Routing Key | Triggered When |
+|-------------|----------------|
+| `UserRegistered` | Registration succeeded |
+| `UserLoggedIn` | Login succeeded |
+| `UserLoggedOut` | Logout called |
+| `PasswordChanged` | Password reset completed |
+| `EmailVerified` | Email verification completed |
+| `UserDeleted` | User soft-deleted |
 
 ---
 
 ## Database Migrations
 
 ```bash
-# Up
-migrate -path migrations -database "$DATABASE_URL" up
+# Run all pending migrations
+docker compose run --rm migrate
 
-# Down one
+# Roll back the last migration
 migrate -path migrations -database "$DATABASE_URL" down 1
 
-# Create a new migration
+# Create a new migration file
 make migrate-create
 ```
+
+---
+
+## Kubernetes Deployment
+
+K8s does not run migrations automatically. The migration Job runs first, then the Deployment starts.
+
+```bash
+# 1. Build and push the image
+docker build -f docker/Dockerfile -t your-registry/auth-service:1.0.0 .
+docker push your-registry/auth-service:1.0.0
+
+# 2. Update the image name in k8s/deployment.yaml
+# 3. Fill in real secrets in k8s/secret.yaml
+
+# 4. Deploy (runs migrations first, then the service)
+make k8s-deploy
+```
+
+`make k8s-deploy` applies secrets → configmaps → migration Job (waits for completion) → Deployment → Service → Ingress.
+
+```bash
+# Tear down
+make k8s-delete
+
+# View logs
+make k8s-logs
+```
+
+---
+
+## Observability
+
+| Signal | How |
+|--------|-----|
+| Health | `GET /health` |
+| Metrics | `GET /metrics` (Prometheus format) |
+| Tracing | Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable OTLP export |
+
+---
+
+## Security
+
+| Concern | Implementation |
+|---------|---------------|
+| Password hashing | Argon2id |
+| Access tokens | HS256 JWT, 15 min expiry |
+| Refresh tokens | Rotated on every use, stored as SHA-256 hash |
+| OTP codes | 6-digit, 15 min TTL |
+| Rate limiting | Redis-backed per IP |
+| Soft deletes | Users are never hard-deleted |
+| Email enumeration | Forgot-password always returns 200 |
 
 ---
 
@@ -182,59 +274,53 @@ make migrate-create
 
 ```
 auth_service/
-├── cmd/server/            # Entry point
+├── cmd/server/               # Entry point (main.go)
+├── configs/config.yaml       # Default configuration
 ├── internal/
-│   ├── config/            # Config loading (Viper)
-│   ├── delivery/
-│   │   ├── http/          # REST handlers + router (Gin)
-│   │   └── grpc/          # gRPC server
-│   ├── domain/            # Entities + repository interfaces
+│   ├── config/               # Config loading (Viper)
+│   ├── domain/               # Entities + repository interfaces
 │   │   ├── user/
-│   │   ├── auth/          # Tokens, OTPs
+│   │   ├── auth/             # Tokens, OTPs
 │   │   ├── role/
 │   │   └── permission/
-│   ├── middleware/        # JWT auth, RBAC, rate limiting
-│   ├── observability/     # Prometheus metrics, OTEL tracing
+│   ├── usecase/              # Business logic (one package per operation)
 │   ├── repository/
-│   │   ├── postgres/      # pgx implementations
-│   │   └── redis/         # Cache, blacklist, rate limiter
+│   │   ├── postgres/         # pgx implementations
+│   │   └── redis/            # Cache, blacklist, rate limiter
 │   ├── service/
-│   │   ├── jwt/           # JWT issue + validate (HS256)
-│   │   ├── password/      # Argon2id hashing
-│   │   ├── email/         # SMTP
-│   │   └── event/         # RabbitMQ publisher
-│   └── usecase/           # Business logic per operation
+│   │   ├── jwt/              # HS256 token issue + validate
+│   │   ├── password/         # Argon2id hashing
+│   │   ├── email/            # SMTP
+│   │   └── event/            # RabbitMQ publisher
+│   ├── delivery/
+│   │   ├── http/             # Gin handlers + router
+│   │   └── grpc/             # gRPC server
+│   ├── middleware/            # JWT auth, RBAC, rate limiting
+│   └── observability/        # Prometheus metrics, OTEL tracing
 ├── proto/
 │   ├── auth.proto
-│   └── gen/auth/          # gRPC stubs (JSON codec, replace with make proto)
-├── migrations/            # golang-migrate SQL files
-├── configs/config.yaml
+│   └── gen/auth/             # gRPC stubs (JSON codec — run make proto to replace)
+├── migrations/               # SQL migration files (golang-migrate)
 ├── docker/Dockerfile
 ├── docker-compose.yml
-├── k8s/                   # Kubernetes manifests
+├── k8s/                      # Kubernetes manifests
 └── Makefile
 ```
 
 ---
 
-## Kubernetes Deployment
+## Useful Commands
 
 ```bash
-kubectl apply -f k8s/secret.yaml      # Edit secrets first!
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/ingress.yaml     # Requires nginx ingress controller
+make run            # go run ./cmd/server
+make build          # build binary to bin/auth-service
+make test           # go test -race -cover ./...
+make lint           # golangci-lint run
+make docker-up      # docker compose up -d --build
+make docker-down    # docker compose down
+make migrate-up     # run migrations via docker compose
+make migrate-create # create a new migration file
+make proto          # regenerate gRPC stubs from proto/auth.proto
+make k8s-deploy     # full kubernetes deploy (migrate → deploy)
+make k8s-delete     # tear down kubernetes resources
 ```
-
----
-
-## Security
-
-- Passwords: **Argon2id** hashing
-- Access tokens: **HS256 JWT**, 15 min expiry
-- Refresh tokens: rotated on every use, stored as SHA-256 hash
-- OTP codes: 6-digit, 15 min TTL
-- Rate limiting: Redis-backed per IP
-- Soft deletes: users are never hard-deleted by default
-- Email enumeration prevention on forgot-password
