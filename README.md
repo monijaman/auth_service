@@ -501,15 +501,30 @@ k3s ctr images ls | grep auth-service
 ```
 
 #### 8. Create the dependencies manifest
+Create `k8s/deps.yaml` with PostgreSQL, Redis, and RabbitMQ deployments and their ClusterIP services. Each service name (`postgres-svc`, `redis-svc`, `rabbitmq-svc`) must match the values in `k8s/secret.yaml` so the auth service can reach them.
 
-Create `k8s/deps.yaml` with PostgreSQL, Redis, and RabbitMQ deployments and their ClusterIP services. Each service name (`postgres-svc`, `redis-svc`, `rabbitmq-svc`) matches the values in `k8s/secret.yaml`.
+The repository already includes a ready-to-use file: [auth_service/k8s/deps.yaml](auth_service/k8s/deps.yaml#L1-L200). Key notes:
 
-```yaml
-# postgres + postgres-svc, redis + redis-svc, rabbitmq + rabbitmq-svc
-# postgres uses hostPath: /opt/k8s-data/postgres for persistence
+- PostgreSQL uses a `hostPath` on the VPS: `/opt/k8s-data/postgres` for persistence.
+- RabbitMQ exposes both `5672` (AMQP) and `15672` (management UI) on the ClusterIP service.
+- Redis uses the standard port `6379`.
+
+Apply and verify the dependencies before continuing with secrets and migrations:
+
+```bash
+# From the repo root
+kubectl apply -f k8s/deps.yaml
+kubectl rollout status deployment/postgres --timeout=120s
+# List all three using a set-based selector (preferred)
+kubectl get pods -l 'app in (postgres,redis,rabbitmq)'
+
+# Or list each separately:
+kubectl get pods -l app=postgres
+kubectl get pods -l app=redis
+kubectl get pods -l app=rabbitmq
 ```
 
-See the full file content in the deployment notes or copy from `k8s/secret.yaml.example` for the matching connection strings.
+If you need to inspect or edit connection strings, compare with `k8s/secret.yaml.example` and then create `k8s/secret.yaml` with your real values.
 
 #### 9. Fill in real secrets
 
