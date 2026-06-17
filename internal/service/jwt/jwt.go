@@ -16,6 +16,7 @@ var (
 type Claims struct {
 	UserID      uuid.UUID `json:"user_id"`
 	Email       string    `json:"email"`
+	SiteID      uuid.UUID `json:"site_id"`
 	Roles       []string  `json:"roles"`
 	Permissions []string  `json:"permissions"`
 	jwt.RegisteredClaims
@@ -37,10 +38,11 @@ func New(accessSecret, refreshSecret string, accessExpMinutes, refreshExpDays in
 	}
 }
 
-func (s *Service) GenerateAccessToken(userID uuid.UUID, email string, roles, permissions []string) (string, error) {
+func (s *Service) GenerateAccessToken(userID uuid.UUID, email string, siteID uuid.UUID, roles, permissions []string) (string, error) {
 	claims := &Claims{
 		UserID:      userID,
 		Email:       email,
+		SiteID:      siteID,
 		Roles:       roles,
 		Permissions: permissions,
 		RegisteredClaims: jwt.RegisteredClaims{

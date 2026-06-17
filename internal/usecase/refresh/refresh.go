@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monir/auth_service/internal/domain/auth"
+	"github.com/monir/auth_service/internal/domain/site"
 	"github.com/monir/auth_service/internal/domain/user"
 	"github.com/monir/auth_service/internal/repository/postgres"
 	jwtSvc "github.com/monir/auth_service/internal/service/jwt"
@@ -30,12 +31,13 @@ type Output struct {
 
 type UseCase struct {
 	userRepo  user.Repository
+	siteRepo  site.Repository
 	tokenRepo auth.TokenRepository
 	jwtSvc    *jwtSvc.Service
 }
 
-func New(userRepo user.Repository, tokenRepo auth.TokenRepository, jwtSvc *jwtSvc.Service) *UseCase {
-	return &UseCase{userRepo: userRepo, tokenRepo: tokenRepo, jwtSvc: jwtSvc}
+func New(userRepo user.Repository, siteRepo site.Repository, tokenRepo auth.TokenRepository, jwtSvc *jwtSvc.Service) *UseCase {
+	return &UseCase{userRepo: userRepo, siteRepo: siteRepo, tokenRepo: tokenRepo, jwtSvc: jwtSvc}
 }
 
 func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
@@ -57,7 +59,6 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 		return nil, ErrTokenRevoked
 	}
 
-	// Rotate: revoke old token, issue new pair
 	if err := uc.tokenRepo.RevokeRefreshToken(ctx, tokenHash); err != nil {
 		return nil, err
 	}
@@ -67,16 +68,18 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 		return nil, err
 	}
 
-	roles, err := uc.userRepo.GetRoles(ctx, u.ID)
+	// Use site_id preserved from the original token
+	siteID := stored.SiteID
+	roles, err := uc.siteRepo.GetUserRoles(ctx, u.ID, siteID)
 	if err != nil {
 		return nil, err
 	}
-	perms, err := uc.userRepo.GetPermissions(ctx, u.ID)
+	perms, err := uc.siteRepo.GetUserPermissions(ctx, u.ID, siteID)
 	if err != nil {
 		return nil, err
 	}
 
-	newAccess, err := uc.jwtSvc.GenerateAccessToken(u.ID, u.Email, roles, perms)
+	newAccess, err := uc.jwtSvc.GenerateAccessToken(u.ID, u.Email, siteID, roles, perms)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +92,7 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 	if err := uc.tokenRepo.SaveRefreshToken(ctx, &auth.RefreshToken{
 		ID:        uuid.New(),
 		UserID:    u.ID,
+		SiteID:    siteID,
 		TokenHash: hashToken(newRefresh),
 		DeviceID:  stored.DeviceID,
 		ExpiresAt: time.Now().Add(uc.jwtSvc.RefreshExpiry()),

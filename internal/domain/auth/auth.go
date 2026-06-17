@@ -17,6 +17,7 @@ const (
 type RefreshToken struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
+	SiteID    uuid.UUID
 	TokenHash string
 	DeviceID  string
 	ExpiresAt time.Time

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monir/auth_service/internal/domain/auth"
+	"github.com/monir/auth_service/internal/domain/site"
 	"github.com/monir/auth_service/internal/domain/user"
 	"github.com/monir/auth_service/internal/repository/postgres"
 	"github.com/monir/auth_service/internal/service/event"
@@ -19,12 +20,16 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrAccountInactive    = errors.New("account is not active")
+	ErrSiteNotFound       = errors.New("site not found")
+	ErrSiteRequired       = errors.New("site_id is required")
+	ErrNoSiteAccess       = errors.New("user does not have access to this site")
 )
 
 type Input struct {
-	Email    string `json:"email"    validate:"required,email"`
-	Password string `json:"password" validate:"required"`
-	DeviceID string `json:"device_id"`
+	Email    string    `json:"email"    validate:"required,email"`
+	Password string    `json:"password" validate:"required"`
+	SiteID   uuid.UUID `json:"site_id"  validate:"required"`
+	DeviceID string    `json:"device_id"`
 }
 
 type Output struct {
@@ -32,10 +37,13 @@ type Output struct {
 	RefreshToken string    `json:"refresh_token"`
 	UserID       uuid.UUID `json:"user_id"`
 	Email        string    `json:"email"`
+	SiteID       uuid.UUID `json:"site_id"`
+	Roles        []string  `json:"roles"`
 }
 
 type UseCase struct {
 	userRepo  user.Repository
+	siteRepo  site.Repository
 	tokenRepo auth.TokenRepository
 	pwdSvc    *password.Service
 	jwtSvc    *jwtSvc.Service
@@ -44,6 +52,7 @@ type UseCase struct {
 
 func New(
 	userRepo user.Repository,
+	siteRepo site.Repository,
 	tokenRepo auth.TokenRepository,
 	pwdSvc *password.Service,
 	jwtSvc *jwtSvc.Service,
@@ -51,6 +60,7 @@ func New(
 ) *UseCase {
 	return &UseCase{
 		userRepo:  userRepo,
+		siteRepo:  siteRepo,
 		tokenRepo: tokenRepo,
 		pwdSvc:    pwdSvc,
 		jwtSvc:    jwtSvc,
@@ -76,16 +86,32 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 		return nil, ErrInvalidCredentials
 	}
 
-	roles, err := uc.userRepo.GetRoles(ctx, u.ID)
-	if err != nil {
-		return nil, err
+	if in.SiteID == uuid.Nil {
+		return nil, ErrSiteRequired
 	}
-	perms, err := uc.userRepo.GetPermissions(ctx, u.ID)
+	targetSite, err := uc.siteRepo.FindByID(ctx, in.SiteID)
+	if errors.Is(err, postgres.ErrNotFound) {
+		return nil, ErrSiteNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	accessToken, err := uc.jwtSvc.GenerateAccessToken(u.ID, u.Email, roles, perms)
+	// Get roles and permissions scoped to this site
+	roles, err := uc.siteRepo.GetUserRoles(ctx, u.ID, targetSite.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(roles) == 0 {
+		return nil, ErrNoSiteAccess
+	}
+
+	perms, err := uc.siteRepo.GetUserPermissions(ctx, u.ID, targetSite.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	accessToken, err := uc.jwtSvc.GenerateAccessToken(u.ID, u.Email, targetSite.ID, roles, perms)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +125,7 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 	if err := uc.tokenRepo.SaveRefreshToken(ctx, &auth.RefreshToken{
 		ID:        uuid.New(),
 		UserID:    u.ID,
+		SiteID:    targetSite.ID,
 		TokenHash: tokenHash,
 		DeviceID:  in.DeviceID,
 		ExpiresAt: time.Now().Add(uc.jwtSvc.RefreshExpiry()),
@@ -110,7 +137,7 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 
 	_ = uc.eventPub.Publish(ctx, event.Event{
 		Type:      event.UserLoggedIn,
-		Payload:   map[string]string{"user_id": u.ID.String()},
+		Payload:   map[string]string{"user_id": u.ID.String(), "site_id": targetSite.ID.String()},
 		OccuredAt: time.Now(),
 	})
 
@@ -119,6 +146,8 @@ func (uc *UseCase) Execute(ctx context.Context, in Input) (*Output, error) {
 		RefreshToken: rawRefresh,
 		UserID:       u.ID,
 		Email:        u.Email,
+		SiteID:       targetSite.ID,
+		Roles:        roles,
 	}, nil
 }
 

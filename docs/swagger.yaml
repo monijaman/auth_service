@@ -13,6 +13,10 @@ tags:
     description: Registration, login, tokens, password reset, email verification
   - name: Users
     description: User profile management
+  - name: Roles
+    description: Role and permission management (read — any logged-in user; write — admin only)
+  - name: Sites
+    description: Site management and user-role assignments per site (admin only)
 
 paths:
 
@@ -30,6 +34,8 @@ paths:
               email: user@example.com
               password: secret123
               phone: "+1234567890"
+              site_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+              role: user
       responses:
         '201':
           description: User created
@@ -60,6 +66,7 @@ paths:
             example:
               email: user@example.com
               password: secret123
+              site_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
       responses:
         '200':
           description: Login successful
@@ -273,7 +280,12 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/UserID'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       responses:
         '200':
           description: User found
@@ -298,7 +310,12 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/UserID'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -333,7 +350,12 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/UserID'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       responses:
         '204':
           description: User deleted
@@ -341,6 +363,441 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /roles:
+    get:
+      tags: [Roles]
+      summary: List all roles
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All roles
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoleResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Roles]
+      summary: Create a new role (admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: reviewer
+      responses:
+        '201':
+          description: Role created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RoleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /roles/permissions:
+    get:
+      tags: [Roles]
+      summary: List all available permissions
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All permissions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PermissionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /roles/{id}:
+    get:
+      tags: [Roles]
+      summary: Get role by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleID'
+      responses:
+        '200':
+          description: Role found
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RoleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Roles]
+      summary: Delete a role (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleID'
+      responses:
+        '204':
+          description: Role deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /roles/{id}/permissions:
+    post:
+      tags: [Roles]
+      summary: Assign a permission to a role (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission]
+              properties:
+                permission:
+                  type: string
+                  example: content.publish
+      responses:
+        '200':
+          description: Permission assigned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: permission assigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /roles/{id}/permissions/{permission}:
+    delete:
+      tags: [Roles]
+      summary: Remove a permission from a role (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoleID'
+        - name: permission
+          in: path
+          required: true
+          schema:
+            type: string
+          example: content.publish
+      responses:
+        '204':
+          description: Permission removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sites:
+    get:
+      tags: [Sites]
+      summary: List all sites
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SiteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Sites]
+      summary: Create a new site (admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSiteRequest'
+            example:
+              name: My Site
+              slug: my-site
+              domain: mysite.com
+      responses:
+        '201':
+          description: Site created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SiteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /sites/{id}:
+    get:
+      tags: [Sites]
+      summary: Get site by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+      responses:
+        '200':
+          description: Site found
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SiteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [Sites]
+      summary: Update site (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSiteRequest'
+            example:
+              name: Kossti Updated
+              is_active: true
+      responses:
+        '200':
+          description: Site updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SiteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Sites]
+      summary: Delete site (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+      responses:
+        '204':
+          description: Site deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /sites/{id}/users:
+    get:
+      tags: [Sites]
+      summary: List users on a site with their roles (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+      responses:
+        '200':
+          description: Users on this site
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SiteUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /sites/{id}/users/{user_id}/roles:
+    post:
+      tags: [Sites]
+      summary: Assign a role to a user on a site (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+        - $ref: '#/components/parameters/UserID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignRoleRequest'
+            example:
+              role: editor
+      responses:
+        '200':
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: role assigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sites/{id}/users/{user_id}/roles/{role}:
+    delete:
+      tags: [Sites]
+      summary: Remove a role from a user on a site (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SiteID'
+        - $ref: '#/components/parameters/UserID'
+        - name: role
+          in: path
+          required: true
+          schema:
+            type: string
+          example: editor
+      responses:
+        '204':
+          description: Role removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
 
@@ -352,7 +809,7 @@ components:
 
   parameters:
     UserID:
-      name: id
+      name: user_id
       in: path
       required: true
       schema:
@@ -360,13 +817,31 @@ components:
         format: uuid
       example: 550e8400-e29b-41d4-a716-446655440000
 
+    SiteID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 660e8400-e29b-41d4-a716-446655440000
+
+    RoleID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 770e8400-e29b-41d4-a716-446655440000
+
   schemas:
 
     # ── Requests ──────────────────────────────────────────────────────────────
 
     RegisterRequest:
       type: object
-      required: [email, password]
+      required: [email, password, site_id, role]
       properties:
         email:
           type: string
@@ -377,16 +852,29 @@ components:
         phone:
           type: string
           description: E.164 format (e.g. +1234567890)
+        site_id:
+          type: string
+          format: uuid
+          description: Site to register on. Use GET /sites to list available sites.
+        role:
+          type: string
+          description: Role to assign on the site.
+          enum: [super_admin, admin, manager, editor, author, moderator, staff, user]
+          example: user
 
     LoginRequest:
       type: object
-      required: [email, password]
+      required: [email, password, site_id]
       properties:
         email:
           type: string
           format: email
         password:
           type: string
+        site_id:
+          type: string
+          format: uuid
+          description: Site to log into (required). Use GET /sites to list available sites.
         device_id:
           type: string
           description: Optional device identifier for token tracking
@@ -441,6 +929,43 @@ components:
         phone:
           type: string
 
+    CreateSiteRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          example: Kossti
+        slug:
+          type: string
+          description: URL-safe identifier, must be unique
+          example: kossti
+        domain:
+          type: string
+          example: kossti.com
+
+    UpdateSiteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        domain:
+          type: string
+        is_active:
+          type: boolean
+
+    AssignRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          description: Role name to assign
+          enum: [super_admin, admin, manager, editor, author, moderator, staff, user]
+          example: editor
+
     # ── Responses ─────────────────────────────────────────────────────────────
 
     RegisterResponse:
@@ -451,12 +976,19 @@ components:
           format: uuid
         email:
           type: string
+        site_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          example: user
 
     LoginResponse:
       type: object
       properties:
         access_token:
           type: string
+          description: JWT — contains site_id, roles, and permissions in the payload
         refresh_token:
           type: string
         user_id:
@@ -464,6 +996,14 @@ components:
           format: uuid
         email:
           type: string
+        site_id:
+          type: string
+          format: uuid
+        roles:
+          type: array
+          items:
+            type: string
+          example: [user]
 
     RefreshResponse:
       type: object
@@ -488,6 +1028,60 @@ components:
         status:
           type: string
           enum: [active, inactive, banned]
+
+    RoleResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: editor
+
+    PermissionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: content.publish
+
+    SiteResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Kossti
+        slug:
+          type: string
+          example: kossti
+        domain:
+          type: string
+          example: kossti.com
+        is_active:
+          type: boolean
+          example: true
+
+    SiteUserResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          example: user@kossti.com
+        roles:
+          type: array
+          items:
+            type: string
+          example: [editor, author]
 
     SuccessEnvelope:
       type: object

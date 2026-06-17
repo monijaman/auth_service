@@ -16,6 +16,8 @@ import (
 type Handlers struct {
 	Auth *handler.AuthHandler
 	User *handler.UserHandler
+	Site *handler.SiteHandler
+	Role *handler.RoleHandler
 }
 
 func New(h Handlers, jwtSvc *jwt.Service, cache *redisCache.TokenCache) *gin.Engine {
@@ -66,6 +68,31 @@ func New(h Handlers, jwtSvc *jwt.Service, cache *redisCache.TokenCache) *gin.Eng
 			users.GET("/:id", h.User.GetByID)
 			users.PUT("/:id", h.User.Update)
 			users.DELETE("/:id", h.User.Delete)
+		}
+
+		// Roles & permissions
+		roles := v1.Group("/roles", authMW, normalLimit)
+		{
+			roles.GET("",                                        h.Role.List)
+			roles.GET("/permissions",                            h.Role.ListPermissions)
+			roles.GET("/:id",                                    h.Role.GetByID)
+			roles.POST("",              mw.RequireRole("admin"), h.Role.Create)
+			roles.DELETE("/:id",        mw.RequireRole("admin"), h.Role.Delete)
+			roles.POST("/:id/permissions",                       mw.RequireRole("admin"), h.Role.AssignPermission)
+			roles.DELETE("/:id/permissions/:permission",         mw.RequireRole("admin"), h.Role.RemovePermission)
+		}
+
+		// Site management — admin only
+		sites := v1.Group("/sites", authMW, normalLimit)
+		{
+			sites.GET("",                                  h.Site.List)
+			sites.GET("/:id",                             h.Site.GetByID)
+			sites.POST("",          mw.RequireRole("admin"), h.Site.Create)
+			sites.PUT("/:id",       mw.RequireRole("admin"), h.Site.Update)
+			sites.DELETE("/:id",    mw.RequireRole("admin"), h.Site.Delete)
+			sites.GET("/:id/users", mw.RequireRole("admin"), h.Site.ListUsers)
+			sites.POST("/:id/users/:user_id/roles",          mw.RequireRole("admin"), h.Site.AssignUserRole)
+			sites.DELETE("/:id/users/:user_id/roles/:role",  mw.RequireRole("admin"), h.Site.RemoveUserRole)
 		}
 	}
 

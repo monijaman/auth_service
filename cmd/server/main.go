@@ -81,6 +81,8 @@ func main() {
 
 	// ── Repositories ─────────────────────────────────────────────────────────
 	userRepo    := postgresRepo.NewUserRepo(db)
+	roleRepo    := postgresRepo.NewRoleRepo(db)
+	siteRepo    := postgresRepo.NewSiteRepo(db)
 	tokenRepo   := postgresRepo.NewTokenRepo(db)
 	cache       := redisRepo.NewTokenCache(redisClient)
 
@@ -90,20 +92,24 @@ func main() {
 	emailService := email.New(cfg.Email.Host, cfg.Email.Port, cfg.Email.Username, cfg.Email.Password, cfg.Email.From)
 
 	// ── Use Cases ────────────────────────────────────────────────────────────
-	registerUC    := register.New(userRepo, pwdService, eventPub)
-	loginUC       := login.New(userRepo, tokenRepo, pwdService, jwtService, eventPub)
-	refreshUC     := refresh.New(userRepo, tokenRepo, jwtService)
+	registerUC    := register.New(userRepo, roleRepo, siteRepo, pwdService, eventPub)
+	loginUC       := login.New(userRepo, siteRepo, tokenRepo, pwdService, jwtService, eventPub)
+	refreshUC     := refresh.New(userRepo, siteRepo, tokenRepo, jwtService)
 	logoutUC      := logout.New(tokenRepo, jwtService, eventPub)
 	forgotPwUC    := forgotpassword.New(userRepo, tokenRepo, emailService)
 	resetPwUC     := resetpassword.New(userRepo, tokenRepo, tokenRepo, pwdService, eventPub)
 	verifyEmailUC := verifyemail.New(userRepo, tokenRepo, emailService, eventPub)
 
 	// ── HTTP Handlers ────────────────────────────────────────────────────────
+	permRepo    := postgresRepo.NewPermissionRepo(db)
+
 	authHandler := handler.NewAuthHandler(registerUC, loginUC, refreshUC, logoutUC, forgotPwUC, resetPwUC, verifyEmailUC)
 	userHandler := handler.NewUserHandler(userRepo)
+	siteHandler := handler.NewSiteHandler(siteRepo, roleRepo)
+	roleHandler := handler.NewRoleHandler(roleRepo, permRepo)
 
 	httpEngine := router.New(
-		router.Handlers{Auth: authHandler, User: userHandler},
+		router.Handlers{Auth: authHandler, User: userHandler, Site: siteHandler, Role: roleHandler},
 		jwtService,
 		cache,
 	)

@@ -59,6 +59,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			response.Conflict(c, err.Error())
 			return
 		}
+		if errors.Is(err, register.ErrSiteRequired) || errors.Is(err, register.ErrSiteNotFound) || errors.Is(err, register.ErrRoleNotFound) {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.InternalError(c)
 		return
 	}
@@ -80,6 +84,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 		if errors.Is(err, login.ErrAccountInactive) {
 			c.JSON(http.StatusForbidden, response.Body{Success: false, Error: err.Error()})
+			return
+		}
+		if errors.Is(err, login.ErrSiteRequired) || errors.Is(err, login.ErrSiteNotFound) {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		if errors.Is(err, login.ErrNoSiteAccess) {
+			response.Forbidden(c, err.Error())
 			return
 		}
 		response.InternalError(c)
