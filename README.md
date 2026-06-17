@@ -206,6 +206,47 @@ make k8s-deploy
 
 `make k8s-deploy` applies in order: secrets → configmaps → migration Job (waits for it to finish) → Deployment → Service → Ingress.
 
+## Troubleshooting: Ingress `/health` returns 404
+
+Symptom: public requests to `https://<host>/health` return HTTP 404, while `kubectl port-forward svc/auth-service 8080:8080` and `curl http://localhost:8080/health` return `{"status":"ok"}`.
+
+Root cause: an NGINX Ingress annotation `nginx.ingress.kubernetes.io/rewrite-target: /` rewrites incoming paths (for example `/health`) to `/`, which the app does not handle and returns 404.
+
+Quick fixes (run on the machine with `kubectl` configured):
+
+```bash
+# Apply the edited ingress that preserves original paths
+kubectl apply -f k8s/ingress.yaml
+
+# Or remove the annotation in-place and force controller reload
+kubectl annotate ingress auth-service nginx.ingress.kubernetes.io/rewrite-target- --overwrite
+kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx
+
+# Verify the Ingress no longer rewrites and controller reloaded
+kubectl describe ingress auth-service
+kubectl logs -n ingress-nginx deployment/ingress-nginx-controller --tail=200
+
+# Test public endpoint
+curl -kv https://auth.kossti.com/health
+
+# Port-forward sanity check (keeps a local connection open)
+kubectl port-forward svc/auth-service 8080:8080
+curl http://127.0.0.1:8080/health
+```
+
+What to watch for:
+- `kubectl describe ingress` should not show the `rewrite-target` annotation.
+- Ingress controller logs should show a successful reload and no fatal errors.
+- App logs should show `GET "/health"` (not `GET "/"`) and return 200.
+
+Commit the fix to track it in the repo:
+
+```bash
+git add k8s/ingress.yaml
+git commit -m "Ingress: preserve paths, add /health"
+git push
+```
+
 ---
 
 ### Tool Responsibility Summary
