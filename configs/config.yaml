@@ -6,7 +6,7 @@ grpc:
   port: "50051"
 
 postgres:
-  dsn: "postgres://auth_user:auth_pass@localhost:5432/auth_db?sslmode=disable"
+  dsn: "postgres://auth_user:auth_pass@localhost:5433/auth_db?sslmode=disable"
   max_conns: 25
   min_conns: 5
 

@@ -8,6 +8,7 @@ Other services authenticate users via **REST** (external) and **gRPC** (internal
 ## Table of Contents
 
 - [Status](#status)
+- [How Docker & Kubernetes Work Together](#how-docker--kubernetes-work-together)
 - [Prerequisites](#prerequisites)
 - [Run Locally](#run-locally)
 - [Verify It Works](#verify-it-works)
@@ -17,6 +18,7 @@ Other services authenticate users via **REST** (external) and **gRPC** (internal
 - [Events](#events-rabbitmq)
 - [Database Migrations](#database-migrations)
 - [Kubernetes Deployment](#kubernetes-deployment)
+- [Swagger UI](#swagger-ui)
 - [Observability](#observability)
 - [Security](#security)
 - [Project Structure](#project-structure)
@@ -37,6 +39,182 @@ Other services authenticate users via **REST** (external) and **gRPC** (internal
 | 8 | RabbitMQ event publishing | ✅ Done |
 | 9 | Prometheus metrics + OpenTelemetry tracing | ✅ Done |
 | 10 | Kubernetes manifests | ✅ Done |
+
+---
+
+## How Docker & Kubernetes Work Together
+
+### The Core Mental Model
+
+```
+Your Code (Go app)
+     ↓
+Docker  — packages your code + its dependencies into a portable "box" (image/container)
+     ↓
+Kubernetes — runs and manages those boxes at scale in production
+```
+
+Docker and Kubernetes are not competitors. **Docker builds the thing; Kubernetes runs and manages many copies of it.**
+
+---
+
+### What Docker Does in This Project
+
+**Problem Docker solves:** this service needs four things to run — PostgreSQL, Redis, RabbitMQ, and the Go app itself. Installing all four on your machine is messy, version-specific, and won't match production. Docker wraps each one in an isolated container that works the same everywhere.
+
+#### Dockerfile (`docker/Dockerfile`)
+
+A two-stage recipe:
+
+| Stage | Base image | What it does |
+|---|---|---|
+| `builder` | `golang:1.24-alpine` | Downloads deps, compiles the Go binary |
+| `runtime` | `scratch` (empty) | Copies only the final binary — no OS, no shell |
+
+The result is a ~10 MB image instead of a ~300 MB one.
+
+#### docker-compose.yml
+
+Defines your entire local environment in one file. All services share a private network (`auth-net`) so they can reach each other **by container name** — that's why `DATABASE_URL` uses `@postgres:5432` instead of `@localhost:5432`.
+
+| Service | Role | Port |
+|---|---|---|
+| `postgres` | Database | 5432 |
+| `redis` | Token blacklist + rate limiting | 6379 |
+| `rabbitmq` | Event bus | 5672 / 15672 (UI) |
+| `auth` | Your Go service | 8080 (HTTP), 50051 (gRPC) |
+| `migrate` | One-time DB setup job | — |
+
+`depends_on` + `healthcheck` ensures the Go app doesn't start until Postgres is actually accepting connections, not just started.
+
+---
+
+### What Kubernetes Does
+
+**Problem Kubernetes solves:** Docker Compose runs on one machine. In production you need:
+
+- **Multiple copies** running so one crash doesn't take everything down
+- **Automatic restarts** when a container dies
+- **Rolling updates** — deploy a new version with zero downtime
+- **Health checking** — stop sending traffic to a broken container
+- **Secret management** — keep passwords out of your code
+
+Kubernetes (K8s) manages all of this. You write YAML describing *what you want*, and K8s makes it happen and keeps it that way.
+
+#### K8s files (`k8s/`)
+
+| File | What it does |
+|---|---|
+| `deployment.yaml` | "Run 2 copies of the container. If one crashes, restart it. Update one at a time." |
+| `service.yaml` | "Give those 2 copies a single stable address so other services can reach them." |
+| `ingress.yaml` | "Route external HTTP traffic into the service." |
+| `secret.yaml` | "Store passwords (DB URL, JWT secrets) securely — inject them as env vars." |
+| `configmap.yaml` | "Store `config.yaml` and mount it into the container." |
+| `migration-job.yaml` | "Run DB migrations once before the app starts, then stop." |
+
+Key settings in `deployment.yaml`:
+
+- `replicas: 2` — K8s always keeps 2 copies alive; if one dies it spins up a replacement.
+- `livenessProbe` — K8s calls `GET /health`. If it fails repeatedly, the container is restarted.
+- `readinessProbe` — K8s calls `GET /health`. Until it passes, no traffic is sent to that pod.
+- `rollingUpdate: maxUnavailable: 0` — during a deploy, the old copy stays up until the new one is healthy.
+
+---
+
+### How They Fit Together
+
+```
+Write code
+    ↓
+docker build        ← Dockerfile turns your code into an image
+    ↓
+docker push         ← Image goes to a registry (Docker Hub, ECR, GCR, etc.)
+    ↓
+kubectl apply       ← K8s pulls the image from the registry, runs it, watches it
+```
+
+`docker-compose.yml` is for **local development only**. `k8s/` is for **production**. Both use the same Docker image — that is the link between them.
+
+---
+
+### Running Locally (Windows — step by step)
+
+**1. Install Docker Desktop** — [docs.docker.com/desktop/install/windows-install](https://docs.docker.com/desktop/install/windows-install/). Make sure it is running (check the system tray icon).
+
+**2. Create your `.env` file**
+
+```powershell
+copy .env.example .env
+```
+
+Open `.env` and set at minimum:
+
+```
+JWT_ACCESS_SECRET=some-random-string-at-least-32-chars
+JWT_REFRESH_SECRET=another-random-string-at-least-32-chars
+```
+
+**3. Start infrastructure**
+
+```powershell
+docker compose up -d postgres redis rabbitmq
+```
+
+Starts the three backing services in the background. Your Go app runs directly on your machine, which makes debugging fast.
+
+**4. Run database migrations** (once, or after adding new migration files)
+
+```powershell
+docker compose run --rm migrate
+```
+
+**5. Start the Go app**
+
+```powershell
+got mod tidy
+go run ./cmd/server
+```
+
+**6. Verify**
+
+```powershell
+curl http://localhost:8080/health
+```
+
+> **Alternative — run everything in Docker** (no Go installation needed, but slower to iterate):
+> ```powershell
+> docker compose up -d --build
+> ```
+
+---
+
+### When You're Ready for Kubernetes
+
+You'll need `kubectl` and a cluster. For local Kubernetes try [minikube](https://minikube.sigs.k8s.io) or [kind](https://kind.sigs.k8s.io). The deploy flow is:
+
+```bash
+# 1. Build and push the image to a registry
+docker build -f docker/Dockerfile -t your-registry/auth-service:1.0.0 .
+docker push your-registry/auth-service:1.0.0
+
+# 2. Update the image name in k8s/deployment.yaml
+# 3. Fill in real secrets in k8s/secret.yaml
+
+# 4. Deploy (migrations run first, then the service)
+make k8s-deploy
+```
+
+`make k8s-deploy` applies in order: secrets → configmaps → migration Job (waits for it to finish) → Deployment → Service → Ingress.
+
+---
+
+### Tool Responsibility Summary
+
+| Tool | Environment | Responsibility |
+|---|---|---|
+| `Dockerfile` | Everywhere | Defines how to package your app into an image |
+| `docker-compose.yml` | Local dev | Runs all services together on your machine |
+| `k8s/*.yaml` | Production | Tells Kubernetes how to run, scale, and watch your service |
 
 ---
 
@@ -243,6 +421,27 @@ make k8s-delete
 # View logs
 make k8s-logs
 ```
+
+---
+
+## Swagger UI
+
+Interactive API docs — try every endpoint directly from the browser.
+
+```bash
+docker compose up -d swagger-ui
+```
+
+Then open: **`http://localhost:8081`**
+
+The spec lives at [docs/swagger.yaml](docs/swagger.yaml).
+
+**Typical test flow:**
+
+1. `POST /auth/register` — create a user
+2. `POST /auth/login` — copy the `access_token` from the response
+3. Click **Authorize** (lock icon, top right) → paste the token
+4. All protected endpoints will now send `Authorization: Bearer ...` automatically
 
 ---
 

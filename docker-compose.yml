@@ -35,7 +35,7 @@ services:
       POSTGRES_PASSWORD: auth_pass
       POSTGRES_DB: auth_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -75,6 +75,19 @@ services:
       RABBITMQ_DEFAULT_PASS: guest
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - auth-net
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: auth-swagger
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      SWAGGER_JSON: /docs/swagger.yaml
+    volumes:
+      - ./docs:/docs
     networks:
       - auth-net
 

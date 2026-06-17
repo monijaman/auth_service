@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/monir/auth_service/internal/delivery/http/handler"
 	mw "github.com/monir/auth_service/internal/middleware"
@@ -21,6 +22,11 @@ func New(h Handlers, jwtSvc *jwt.Service, cache *redisCache.TokenCache) *gin.Eng
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(requestLogger())
+	r.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"http://localhost:8081"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"Authorization", "Content-Type"},
+	}))
 
 	// Health
 	r.GET("/health", func(c *gin.Context) {

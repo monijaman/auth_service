@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# Kubernetes secrets (real values — never commit)
+k8s/secret.yaml
+
 # Editor/IDE
 # .idea/
 # .vscode/
