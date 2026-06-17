@@ -398,6 +398,57 @@ client := authpb.NewAuthServiceClient(conn)
 
 resp, _ := client.ValidateToken(ctx, &authpb.TokenRequest{Token: bearerToken})
 if resp.Valid {
+}
+
+## Monitoring
+
+This section summarizes quick runtime checks, metrics, and recommended monitoring stack components.
+
+- Quick cluster/runtime checks:
+
+```bash
+kubectl get ns
+kubectl get pods --all-namespaces
+kubectl get deploy --all-namespaces
+kubectl get svc --all-namespaces
+kubectl get ingress --all-namespaces
+```
+
+- Quick checks for `auth-service`:
+
+```bash
+kubectl get pods -l app=auth-service -o wide
+kubectl logs -l app=auth-service --tail=200
+kubectl describe deploy auth-service
+kubectl port-forward svc/auth-service 8080:8080
+curl http://127.0.0.1:8080/health
+```
+
+- Fetch metrics from the app (Prometheus exposition at `/metrics`):
+
+```bash
+kubectl port-forward svc/auth-service 8080:8080
+curl http://127.0.0.1:8080/metrics | head
+```
+
+- Short-term monitoring (Prometheus + Grafana):
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+helm install monitoring prometheus-community/kube-prometheus-stack -n monitoring --create-namespace
+```
+
+After installation, create a `ServiceMonitor` or PodMonitor for `auth-service` so Prometheus scrapes `/metrics`.
+
+- Logs: deploy Loki + Promtail and view logs from Grafana.
+
+- Tracing: deploy Jaeger or Tempo and an OpenTelemetry Collector. `auth-service` supports OTel (see `internal/observability`).
+
+- Alerts & Dashboards: add PrometheusRule manifests for errors, high latency, and pod restarts; import Go/Gin dashboards into Grafana.
+
+If you want, I can: add a `ServiceMonitor` manifest for `auth-service`, create a sample Grafana dashboard, or generate alert rules next.
     // resp.UserID, resp.Email, resp.Roles, resp.Permissions
 }
 ```
