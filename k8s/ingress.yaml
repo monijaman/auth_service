@@ -6,10 +6,11 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
   rules:
-    - host: auth.example.com
+    - host: auth.kossti.com
       http:
         paths:
           - path: /api/v1/auth
@@ -28,5 +29,5 @@ spec:
                   name: http
   tls:
     - hosts:
-        - auth.example.com
-      secretName: auth-tls
+        - auth.kossti.com
+      secretName: auth-kossti-tls
