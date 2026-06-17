@@ -424,6 +424,152 @@ make k8s-logs
 
 ---
 
+### Deploying to a VPS (Contabo) — auth.kossti.com
+
+Production deployment on a single Contabo VPS using k3s (lightweight Kubernetes) with automatic HTTPS via Let's Encrypt.
+
+**Target:** `https://auth.kossti.com` → VPS `13.140.158.119`
+
+#### 1. DNS
+
+Add an A record at your domain registrar:
+
+```
+A   auth.kossti.com   13.140.158.119   TTL 300
+```
+
+Verify with `nslookup auth.kossti.com` before proceeding.
+
+#### 2. SSH into the VPS and install dependencies
+
+```bash
+ssh root@13.140.158.119
+
+apt update && apt install -y docker.io git curl
+systemctl enable docker && systemctl start docker
+```
+
+#### 3. Install k3s (without built-in Traefik)
+
+```bash
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> ~/.bashrc
+
+kubectl get nodes   # should show Ready
+```
+
+#### 4. Install Nginx Ingress Controller
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx
+```
+
+#### 5. Install cert-manager
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.0/cert-manager.yaml
+
+kubectl rollout status deployment/cert-manager -n cert-manager
+```
+
+#### 6. Create persistent storage directory
+
+```bash
+# Only host directory needed — for PostgreSQL data
+mkdir -p /opt/k8s-data/postgres
+```
+
+#### 7. Clone the repo and build the image
+
+```bash
+cd /opt
+git clone https://github.com/monijaman/auth_service.git
+cd auth_service
+
+# Build the Docker image
+docker build -f docker/Dockerfile -t auth-service:latest .
+
+# Import into k3s containerd (k3s does not use the Docker daemon)
+docker save auth-service:latest | k3s ctr images import -
+
+# Verify
+k3s ctr images ls | grep auth-service
+```
+
+#### 8. Create the dependencies manifest
+
+Create `k8s/deps.yaml` with PostgreSQL, Redis, and RabbitMQ deployments and their ClusterIP services. Each service name (`postgres-svc`, `redis-svc`, `rabbitmq-svc`) matches the values in `k8s/secret.yaml`.
+
+```yaml
+# postgres + postgres-svc, redis + redis-svc, rabbitmq + rabbitmq-svc
+# postgres uses hostPath: /opt/k8s-data/postgres for persistence
+```
+
+See the full file content in the deployment notes or copy from `k8s/secret.yaml.example` for the matching connection strings.
+
+#### 9. Fill in real secrets
+
+```bash
+# Generate two strong random secrets
+openssl rand -hex 32   # use output for JWT_ACCESS_SECRET
+openssl rand -hex 32   # use output for JWT_REFRESH_SECRET
+
+cp k8s/secret.yaml.example k8s/secret.yaml
+nano k8s/secret.yaml   # paste real values
+```
+
+`k8s/secret.yaml` is in `.gitignore` — never commit it.
+
+#### 10. Apply everything in order
+
+```bash
+# Dependencies
+kubectl apply -f k8s/deps.yaml
+kubectl rollout status deployment/postgres
+
+# Config and secrets
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/configmap.yaml
+
+# Database migrations (runs once, then stops)
+kubectl apply -f k8s/migration-configmap.yaml
+kubectl apply -f k8s/migration-job.yaml
+kubectl wait --for=condition=complete job/auth-migrate --timeout=120s
+
+# Auth service
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/deployment.yaml
+
+# TLS issuer + Ingress (apply after DNS is live)
+kubectl apply -f k8s/cluster-issuer.yaml
+kubectl apply -f k8s/ingress.yaml
+```
+
+#### 11. Verify
+
+```bash
+kubectl get pods                          # all should show Running
+kubectl get ingress                       # should show the VPS IP
+kubectl describe certificate auth-kossti-tls   # wait for Ready: True
+curl https://auth.kossti.com/health       # {"status":"ok"}
+```
+
+#### What lives where on the host
+
+| Path | Purpose |
+|---|---|
+| `/opt/auth_service/` | Cloned repo and k8s manifests |
+| `/opt/k8s-data/postgres/` | PostgreSQL data (persisted across pod restarts) |
+| Everything else | Runs inside containers — no files on host |
+
+> No `/var/www` directory is needed. Nginx runs as a pod inside Kubernetes and routes external traffic to your service via the Ingress resource.
+
+---
+
 ## Swagger UI
 
 Interactive API docs — try every endpoint directly from the browser.
